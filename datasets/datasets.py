@@ -41,10 +41,16 @@ class VideoHDF5Dataset(Dataset):
                 total = len(frames_dset)
                 n_frames = int(total if preload_ratio is None else max(0, min(total, int(total * preload_ratio))))
 
+                target_h, target_w = self.resize_to
                 self.data = []
                 for i in tqdm(range(load_start_index, n_frames, load_chunk_size), desc=f"Loading {n_frames} frames"):
                     chunk = frames_dset[i:min(i + load_chunk_size, n_frames)][:]
-                    self.data.extend(chunk)
+                    for frame in chunk:
+                        # cached .h5 frames may be stored at a different resolution than
+                        # the model expects; downscale/upscale to the target size on load.
+                        if frame.shape[0] != target_h or frame.shape[1] != target_w:
+                            frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+                        self.data.append(frame)
                 self.data = np.array(self.data)
         else:
             frames = self._preprocess_video(
@@ -211,7 +217,7 @@ class PicoDoomDataset(VideoHDF5Dataset):
         )
 
 class ZeldaDataset(VideoHDF5Dataset):
-    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=4, resolution=(128, 128), fps=15, preload_ratio=0.2):
+    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=4, resolution=(64, 64), fps=15, preload_ratio=0.2):
         super().__init__(
             video_path=video_path,
             transform=transform,

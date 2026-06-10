@@ -3,7 +3,7 @@ use_wandb: true
 wandb_project: tinyworlds
 
 # dataset
-dataset: PICODOOM
+dataset: ZELDA
 preload_ratio: 0.3 # 0.005
 
 # shared model params
@@ -17,7 +17,7 @@ n_actions: 4
 # performance
 amp: true
 tf32: true
-compile: true
+compile: false
 
 # distributed launch (torchrun)
 distributed: 
