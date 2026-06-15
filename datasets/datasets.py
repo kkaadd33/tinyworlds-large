@@ -146,12 +146,13 @@ class VideoHDF5Dataset(Dataset):
 
 # TODO: add more datasets
 class PongDataset(VideoHDF5Dataset):
-    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=1, resolution=(64, 64), fps=30, preload_ratio=1):
+    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=1, resolution=(64, 64), fps=30, preload_ratio=1, disable_test_split=True):
         super().__init__(
             video_path=video_path,
             transform=transform,
             save_path=save_path,
             train=train,
+            disable_test_split=disable_test_split,
             num_frames=num_frames,
             resize_to=resolution,
             fps=fps,
@@ -163,12 +164,13 @@ class PongDataset(VideoHDF5Dataset):
         )
 
 class PolePositionDataset(VideoHDF5Dataset):
-    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=4, resolution=(64, 64), fps=30, preload_ratio=1):
+    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=4, resolution=(64, 64), fps=30, preload_ratio=1, disable_test_split=True):
         super().__init__(
             video_path=video_path,
             transform=transform,
             save_path=save_path,
             train=train,
+            disable_test_split=disable_test_split,
             num_frames=num_frames,
             resize_to=resolution,
             fps=fps,
@@ -181,12 +183,13 @@ class PolePositionDataset(VideoHDF5Dataset):
         )
 
 class SonicDataset(VideoHDF5Dataset):
-    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=4, resolution=(128, 128), fps=15, preload_ratio=1):
+    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=4, resolution=(128, 128), fps=15, preload_ratio=1, disable_test_split=True):
         super().__init__(
             video_path=video_path,
             transform=transform,
             save_path=save_path,
             train=train,
+            disable_test_split=disable_test_split,
             num_frames=num_frames,
             resize_to=resolution,
             fps=fps,
@@ -199,12 +202,13 @@ class SonicDataset(VideoHDF5Dataset):
         )
 
 class PicoDoomDataset(VideoHDF5Dataset):
-    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=4, resolution=(128, 128), fps=30, preload_ratio=0.3):
+    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=4, resolution=(128, 128), fps=30, preload_ratio=0.3, disable_test_split=True):
         super().__init__(
             video_path=video_path,
             transform=transform,
             save_path=save_path,
             train=train,
+            disable_test_split=disable_test_split,
             num_frames=num_frames,
             resize_to=resolution,
             fps=fps,
@@ -217,12 +221,13 @@ class PicoDoomDataset(VideoHDF5Dataset):
         )
 
 class ZeldaDataset(VideoHDF5Dataset):
-    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=4, resolution=(64, 64), fps=15, preload_ratio=0.2):
+    def __init__(self, video_path, transform=None, save_path=None, train=True, num_frames=4, resolution=(64, 64), fps=15, preload_ratio=0.2, disable_test_split=True):
         super().__init__(
             video_path=video_path,
             transform=transform,
             save_path=save_path,
             train=train,
+            disable_test_split=disable_test_split,
             num_frames=num_frames,
             resize_to=resolution,
             fps=fps,

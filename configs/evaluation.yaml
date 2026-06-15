@@ -1,0 +1,42 @@
+# Genie-style evaluation: tokenizer-recon PSNR + raw PSNR + Delta_t PSNR.
+# See genie.pdf section 3 ("Metrics") for the protocol; see DATASETS.md for
+# the resolution/preload caveats per dataset.
+
+# Checkpoint paths (auto-resolved from results/ when use_latest_checkpoints=true)
+video_tokenizer_path:
+latent_actions_path:
+dynamics_path:
+use_latest_checkpoints: true
+
+# Eval datasets — the trained suite is run against each of these in order.
+# For a Zelda-trained suite, ZELDA is in-distribution and the other four are OOD.
+eval_datasets: [ZELDA, PONG, POLE_POSITION, SONIC, PICODOOM]
+zelda_use_holdout: true        # use the chronological last 10% of ZELDA frames
+force_resize_to: [64, 64]      # match Zelda model frame_size; SONIC/PICODOOM otherwise default to 128x128
+
+# Rollout — autoregressive 1-frame predictions (matches Genie's per-t rollout)
+context_window: 2
+T_pred: 4                      # paper reports Delta_t PSNR with t = 4
+prediction_horizon: 1
+num_maskgit_steps: 10
+temperature: 0.0               # argmax -> deterministic per (clip, action_seed)
+
+# Random-action averaging — paper samples actions from a categorical distribution;
+# we average random-action rollouts over this many seeds to reduce variance.
+n_random_seeds: 5
+
+# Eval set sizing — null = use entire dataset
+n_clips_per_dataset: 32
+batch_size: 8
+seed: 42
+
+# Acceleration
+device: cuda
+amp: false
+tf32: false
+
+# Output
+output_dir: evaluation_results
+log_to_wandb: false
+run_name:                       # null -> auto-generated `eval_<timestamp>` subdir
+n_visualization_clips: 0        # save a 3-row PNG (GT / pred-GT-LAM / pred-random) for the first N clips per dataset

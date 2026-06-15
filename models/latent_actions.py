@@ -107,6 +107,38 @@ class LatentActionModel(nn.Module):
         self.decoder = LatentActionsDecoder(frame_size, patch_size, embed_dim, num_heads, hidden_dim, num_blocks, conditioning_dim=self.action_dim)
         self.var_target = 0.01
         self.var_lambda = 100.0
+    #     self.entropy_lambda = 0.1
+    #     self.entropy_tau = 0.1  # temperature for soft bin assignment
+
+    # def _code_entropy_loss(self, action_latents):
+    #     # Differentiable entropy loss over the discrete code distribution (MAGVIT-v2 Eq. 5):
+    #     #   L_ent = E[H(f(z))] - H[E(f(z))]
+    #     # term 1 (min): avg per-sample entropy → each sample commits to one code
+    #     # term 2 (max): entropy of avg distribution → all codes used across the batch
+    #     #
+    #     # f(z) = softmax(-dist^2 to each bin center / tau), computed per FSQ dimension
+    #     # action_latents: [B, T-1, A]
+
+    #     # replicate FSQ's scale_and_shift(tanh(z)) to get bounded pre-quant values in [0, num_bins-1]
+    #     bounded_z = 0.5 * (torch.tanh(action_latents) + 1) * (self.quantizer.num_bins - 1)  # [B, T-1, A]
+
+    #     # squared distance to each bin center: centers are 0, 1, ..., num_bins-1
+    #     centers = torch.arange(self.quantizer.num_bins, device=action_latents.device, dtype=action_latents.dtype)  # [num_bins]
+    #     dists_sq = (bounded_z.unsqueeze(-1) - centers) ** 2  # [B, T-1, A, num_bins]
+
+    #     log_probs = F.log_softmax(-dists_sq / self.entropy_tau, dim=-1)  # [B, T-1, A, num_bins]
+    #     probs = log_probs.exp()
+
+    #     # term 1: E[H(f(z))] — mean per-sample entropy, averaged over B, T, A
+    #     per_dim_entropy = -(probs * log_probs).sum(dim=-1)  # [B, T-1, A]
+    #     avg_sample_entropy = per_dim_entropy.mean()
+
+    #     # term 2: H[E(f(z))] — entropy of the mean distribution over B and T, averaged over A
+    #     avg_probs = probs.mean(dim=(0, 1))  # [A, num_bins]
+    #     batch_entropy = -(avg_probs * avg_probs.log().clamp(min=-1e9)).sum(dim=-1)  # [A]
+    #     avg_batch_entropy = batch_entropy.mean()
+
+    #     return avg_sample_entropy - avg_batch_entropy
 
     def forward(self, frames):
         # frames: [B, T, C, H, W]
@@ -125,7 +157,11 @@ class LatentActionModel(nn.Module):
         # variance loss across batch dim for pre-quant encoder outputs (helps prevent action collapse)
         z_var = action_latents.var(dim=0, unbiased=False).mean()
         var_penalty = F.relu(self.var_target - z_var)
-        total_loss = recon_loss + self.var_lambda * var_penalty
+
+        # code entropy loss: encourages each sample to commit to one code and all codes to be used
+        # entropy_loss = self._code_entropy_loss(action_latents)
+
+        total_loss = recon_loss + self.var_lambda * var_penalty #+ self.entropy_lambda * entropy_loss
 
         return total_loss, pred_frames
 

@@ -1,24 +1,24 @@
 # paths (need if not get latest)
-video_tokenizer_path: 
-latent_actions_path: 
-dynamics_path: 
-use_latest_checkpoints: true
+video_tokenizer_path: /localhome/local-triv/tinyworlds/results/2026_06_08_12_51_05_zelda/video_tokenizer/checkpoints/video_tokenizer_step_37500
+latent_actions_path: /localhome/local-triv/tinyworlds/results/2026_06_08_12_51_05_zelda/latent_actions/checkpoints/latent_actions_step_9500
+dynamics_path: /localhome/local-triv/tinyworlds/results/2026_06_08_12_51_05_zelda/dynamics/checkpoints/dynamics_step_98000
+use_latest_checkpoints: false
 
 # inference params
-dataset: PONG
+dataset: ZELDA
 preload_ratio:
 device: cuda # make sure to use correct device
-generation_steps: 10
-context_window: 2
+generation_steps: 5
+context_window: 3 #4 # 2
 fps: 2
 temperature: 0.5 # 0 is argmax
-teacher_forced: false # for testing/dev
+teacher_forced: true #false # for testing/dev
 prediction_horizon: 1 # how many masked frames to append and decode at a time
 
 # action selection modes (lower takes priority)
 use_actions: false # use random actions
-use_gt_actions: false # use lam-inferred actions
-use_interactive_mode: true # use user-inputted actions
+use_gt_actions: true #false # use lam-inferred actions
+use_interactive_mode: false # true # use user-inputted actions
 
 # inference acceleration
 amp: false

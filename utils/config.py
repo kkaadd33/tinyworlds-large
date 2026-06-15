@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import List, Optional, Tuple
 import argparse
 import os
 from omegaconf import OmegaConf
@@ -311,6 +311,49 @@ class InferenceConfig:
 	# Interactive mode (user enters action ids)
 	use_interactive_mode: bool
 	preload_ratio: Optional[float] = None
+
+
+@dataclass
+class EvaluationConfig:
+	# Checkpoint paths (use_latest_checkpoints fills these from results/ if missing)
+	video_tokenizer_path: Optional[str]
+	latent_actions_path: Optional[str]
+	dynamics_path: Optional[str]
+	use_latest_checkpoints: bool
+	# Datasets to evaluate on; the script loops over these in order
+	eval_datasets: List[str]
+	# When True, override `disable_test_split=False` for ZELDA only so we eval on the
+	# chronological 10% holdout that training never iterates. OOD datasets are unseen
+	# by definition so this flag does not affect them.
+	zelda_use_holdout: bool
+	# Force-resize all eval datasets to this resolution. Required when the trained
+	# model frame_size differs from a dataset class default (e.g. SONIC/PICODOOM
+	# default to 128x128 but a Zelda 64x64 model needs 64x64 inputs).
+	force_resize_to: Tuple[int, int]
+	# Rollout
+	context_window: int
+	T_pred: int
+	prediction_horizon: int
+	num_maskgit_steps: int
+	temperature: float
+	# Random-action averaging for Delta_t PSNR
+	n_random_seeds: int
+	# Eval set sizing
+	n_clips_per_dataset: Optional[int]
+	batch_size: int
+	seed: int
+	# Acceleration
+	device: str
+	amp: bool
+	tf32: bool
+	# Output
+	output_dir: str
+	log_to_wandb: bool
+	# Optional human-readable subdir name under output_dir; if None, uses eval_<timestamp>.
+	run_name: Optional[str] = None
+	# Number of clips per dataset for which to save a 3-row PNG visualization
+	# (GT vs gt-LAM rollout vs random-action rollout). 0 disables visualizations.
+	n_visualization_clips: int = 0
 
 
 def load_config(config_cls, default_config_path: Optional[str] = None):

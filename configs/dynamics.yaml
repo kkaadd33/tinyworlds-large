@@ -1,9 +1,9 @@
 # Training
 batch_size_per_gpu: 500
 gradient_accumulation_steps: 1
-n_updates: 300000
-learning_rate: 0.01
-log_interval: 2000
+n_updates: 100000 #300000
+learning_rate: 0.001 #0.01
+log_interval: 200 #2000
 
 use_actions: true
 
@@ -14,7 +14,7 @@ hidden_dim: 128
 num_blocks: 8
 
 # Paths
-video_tokenizer_path:
+video_tokenizer_path: 
 latent_actions_path:
 
 # resume from checkpoint
