@@ -1,4 +1,5 @@
 from models.utils import ModelType
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -105,40 +106,49 @@ class LatentActionModel(nn.Module):
         self.encoder = LatentActionsEncoder(frame_size, patch_size, embed_dim, num_heads, hidden_dim, num_blocks, action_dim=self.action_dim)
         self.quantizer = FiniteScalarQuantizer(latent_dim=self.action_dim, num_bins=NUM_LATENT_ACTIONS_BINS)
         self.decoder = LatentActionsDecoder(frame_size, patch_size, embed_dim, num_heads, hidden_dim, num_blocks, conditioning_dim=self.action_dim)
-        self.var_target = 0.01
-        self.var_lambda = 100.0
-    #     self.entropy_lambda = 0.1
-    #     self.entropy_tau = 0.1  # temperature for soft bin assignment
+        self.var_target = float(os.environ.get('LAM_VAR_TARGET', 0.01))
+        # var_lambda=100 destabilizes: when encoder variance momentarily collapses, relu(0.01-var)*100
+        # spikes the loss to ~0.5 and oscillates usage between 1 and 4 codes. The joint entropy loss
+        # now does the real anti-collapse work, so keep only a gentle variance floor (env-overridable).
+        self.var_lambda = float(os.environ.get('LAM_VAR_LAMBDA', 100.0))
+        # variance CEILING (anti-runaway). Observed: pre-quant variance grows unbounded (1.5 -> 2.5 -> ...)
+        # into tanh saturation, then crashes to ~0 around step 1500 and never recovers (all codes look
+        # identical at var=0, so no gradient). We had only a FLOOR, no ceiling. Penalize variance ABOVE
+        # var_max to hold z in tanh's stable range. LAM_VAR_MAX=0 (default) => off, original behavior.
+        self.var_max = float(os.environ.get('LAM_VAR_MAX', 0.0))
+        self.var_ceil_lambda = float(os.environ.get('LAM_VAR_CEIL_LAMBDA', 1.0))
+        # re-enabled anti-collapse entropy loss (was commented out). Fixed action-code
+        # collapse on the tiny model (entropy 0.11 -> 1.75); var penalty alone is not enough.
+        self.entropy_lambda = float(os.environ.get('LAM_ENTROPY_LAMBDA', 0.1))
+        self.entropy_tau = 0.1  # temperature for soft bin assignment
 
-    # def _code_entropy_loss(self, action_latents):
-    #     # Differentiable entropy loss over the discrete code distribution (MAGVIT-v2 Eq. 5):
-    #     #   L_ent = E[H(f(z))] - H[E(f(z))]
-    #     # term 1 (min): avg per-sample entropy → each sample commits to one code
-    #     # term 2 (max): entropy of avg distribution → all codes used across the batch
-    #     #
-    #     # f(z) = softmax(-dist^2 to each bin center / tau), computed per FSQ dimension
-    #     # action_latents: [B, T-1, A]
-
-    #     # replicate FSQ's scale_and_shift(tanh(z)) to get bounded pre-quant values in [0, num_bins-1]
-    #     bounded_z = 0.5 * (torch.tanh(action_latents) + 1) * (self.quantizer.num_bins - 1)  # [B, T-1, A]
-
-    #     # squared distance to each bin center: centers are 0, 1, ..., num_bins-1
-    #     centers = torch.arange(self.quantizer.num_bins, device=action_latents.device, dtype=action_latents.dtype)  # [num_bins]
-    #     dists_sq = (bounded_z.unsqueeze(-1) - centers) ** 2  # [B, T-1, A, num_bins]
-
-    #     log_probs = F.log_softmax(-dists_sq / self.entropy_tau, dim=-1)  # [B, T-1, A, num_bins]
-    #     probs = log_probs.exp()
-
-    #     # term 1: E[H(f(z))] — mean per-sample entropy, averaged over B, T, A
-    #     per_dim_entropy = -(probs * log_probs).sum(dim=-1)  # [B, T-1, A]
-    #     avg_sample_entropy = per_dim_entropy.mean()
-
-    #     # term 2: H[E(f(z))] — entropy of the mean distribution over B and T, averaged over A
-    #     avg_probs = probs.mean(dim=(0, 1))  # [A, num_bins]
-    #     batch_entropy = -(avg_probs * avg_probs.log().clamp(min=-1e9)).sum(dim=-1)  # [A]
-    #     avg_batch_entropy = batch_entropy.mean()
-
-    #     return avg_sample_entropy - avg_batch_entropy
+    def _code_entropy_loss(self, action_latents):
+        # MAGVIT-v2 entropy loss on the JOINT code distribution:  L = E[H(p)] - H[E(p)]
+        #   term 1 (min): avg per-sample entropy -> each sample commits to one code
+        #   term 2 (max): entropy of the batch-avg distribution -> all codes used
+        # NOTE: this operates on the full joint distribution over num_bins**action_dim codes,
+        # NOT per-dimension marginals. The per-dim version cannot see dimension redundancy:
+        # if the two action dims are perfect copies (only codes 00,11 fire) each dim still
+        # has max marginal entropy, so the term is satisfied while only 2 of 4 codes are used.
+        # The joint batch term H[E(p)] is low when the realized codes concentrate on a subset,
+        # so it directly penalizes that redundancy.
+        # action_latents: [B, T-1, A]
+        # per-dim soft bin assignment (replicate FSQ scale_and_shift(tanh(z)) into [0, num_bins-1])
+        bounded_z = 0.5 * (torch.tanh(action_latents) + 1) * (self.quantizer.num_bins - 1)  # [B, T-1, A]
+        centers = torch.arange(self.quantizer.num_bins, device=action_latents.device, dtype=action_latents.dtype)  # [num_bins]
+        dists_sq = (bounded_z.unsqueeze(-1) - centers) ** 2  # [B, T-1, A, num_bins]
+        probs = F.softmax(-dists_sq / self.entropy_tau, dim=-1)  # [B, T-1, A, num_bins]
+        # build the joint distribution over all codes via outer product across the A dims
+        A = probs.shape[2]
+        joint = probs[:, :, 0, :]  # [B, T-1, num_bins]
+        for a in range(1, A):
+            joint = (joint.unsqueeze(-1) * probs[:, :, a, :].unsqueeze(-2)).flatten(-2)  # [B, T-1, num_bins**(a+1)]
+        # joint: [B, T-1, codebook_size]
+        log_joint = (joint + 1e-12).log()
+        per_sample_entropy = -(joint * log_joint).sum(dim=-1).mean()        # E[H(p)]  -> minimize
+        avg_probs = joint.mean(dim=(0, 1))                                  # [codebook_size]
+        batch_entropy = -(avg_probs * (avg_probs + 1e-12).log()).sum()      # H[E(p)]  -> maximize
+        return per_sample_entropy - batch_entropy
 
     def forward(self, frames):
         # frames: [B, T, C, H, W]
@@ -150,18 +160,38 @@ class LatentActionModel(nn.Module):
         # decode to get predicted frames
         pred_frames = self.decoder(frames, action_latents_quantized, training=True)  # [B, T - 1, C, H, W]
 
+        # variance of the pre-quant encoder outputs (used for the var penalty AND to gate motion weighting)
+        z_var = action_latents.var(dim=0, unbiased=False).mean()
+
         # reconstruction loss
         target_frames = frames[:, 1:]  # All frames except first [B, T - 1, C, H, W]
-        recon_loss = F.smooth_l1_loss(pred_frames, target_frames)
+        recon_err = F.smooth_l1_loss(pred_frames, target_frames, reduction='none')  # [B,T-1,C,H,W]
+        # MOTION-WEIGHTED loss: a uniform pixel loss is dominated by the large static background, so the
+        # small moving character barely affects it and the action never learns motion (static recon, weak
+        # control). Up-weight pixels that CHANGED between frames. SELF-GATED on encoder variance: motion
+        # weighting only turns on once the encoder is healthy (z_var > gate), so it can't DRIVE the variance
+        # collapse -- if variance dips, motion backs off and the plain loss + entropy recover it.
+        # env-gated; LAM_MOTION_LAMBDA=0 (default) => off.
+        motion_lambda = float(os.environ.get('LAM_MOTION_LAMBDA', 0.0))
+        motion_gate = float(os.environ.get('LAM_MOTION_GATE', 0.3))  # min z_var to enable motion weighting
+        if motion_lambda > 0.0 and z_var.detach().item() > motion_gate:
+            motion = (frames[:, 1:] - frames[:, :-1]).abs()  # [B,T-1,C,H,W] where the scene moved
+            weight = 1.0 + motion_lambda * motion
+            recon_loss = (recon_err * weight).mean()
+        else:
+            recon_loss = recon_err.mean()
 
-        # variance loss across batch dim for pre-quant encoder outputs (helps prevent action collapse)
-        z_var = action_latents.var(dim=0, unbiased=False).mean()
+        # variance penalty (helps prevent action collapse) -- FLOOR
         var_penalty = F.relu(self.var_target - z_var)
+        # variance CEILING -- caps the runaway into tanh saturation that precedes the collapse
+        var_ceiling = F.relu(z_var - self.var_max) if self.var_max > 0.0 else 0.0 * z_var
 
         # code entropy loss: encourages each sample to commit to one code and all codes to be used
-        # entropy_loss = self._code_entropy_loss(action_latents)
+        entropy_loss = self._code_entropy_loss(action_latents)
 
-        total_loss = recon_loss + self.var_lambda * var_penalty #+ self.entropy_lambda * entropy_loss
+        total_loss = (recon_loss + self.var_lambda * var_penalty
+                      + self.var_ceil_lambda * var_ceiling
+                      + self.entropy_lambda * entropy_loss)
 
         return total_loss, pred_frames
 
