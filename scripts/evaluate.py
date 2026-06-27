@@ -165,6 +165,8 @@ def _evaluate_dataset(
     sum_psnr_gt_per_t = torch.zeros(args.T_pred, dtype=torch.float64)
     sum_psnr_rnd_per_t = torch.zeros(args.T_pred, dtype=torch.float64)
     n_clips = 0
+    sum_pred_motion = 0.0  # mean abs frame-to-frame change of the GT-action PREDICTION (does it move?)
+    sum_gt_motion = 0.0    # same for the ground-truth prediction region (the target motion)
 
     viz_saved = 0
     n_viz_target = args.n_visualization_clips if viz_dir is not None else 0
@@ -192,6 +194,16 @@ def _evaluate_dataset(
             psnr_gt_bt = frame_psnr(x_hat, target)  # [B, T_pred]
             sum_psnr_gt_per_t += psnr_gt_bt.sum(dim=0).double().cpu()
 
+            # PREDICTION MOTION: how much the predicted frames actually change over time, vs the GT.
+            # Δ-PSNR can be high while the prediction is static; this directly measures "does it move".
+            # Filtered to HIGH-MOTION clips (GT motion above MOTION_MIN) so static clips don't dominate.
+            if x_hat.shape[1] > 1:
+                pm = (x_hat[:, 1:] - x_hat[:, :-1]).abs().mean(dim=(1, 2, 3, 4)).double()   # [B] pred motion
+                gm = (target[:, 1:] - target[:, :-1]).abs().mean(dim=(1, 2, 3, 4)).double()  # [B] gt motion
+                hm = gm > float(os.environ.get('MOTION_MIN', 0.0))
+                sum_pred_motion += pm[hm].sum().item()
+                sum_gt_motion += gm[hm].sum().item()
+
             # Average random-action rollouts over n_random_seeds. Combine the global
             # eval seed, the seed index, and batch_idx so different batches see different
             # random action timelines (important when batch_size < dataset size).
@@ -216,10 +228,17 @@ def _evaluate_dataset(
             psnr_rnd_bt = torch.stack(psnr_rnd_per_seed, dim=0).mean(dim=0)  # [B, T_pred]
             sum_psnr_rnd_per_t += psnr_rnd_bt.sum(dim=0).double().cpu()
 
-        # Save visualizations for the first n_viz_target clips of the dataset
+        # Save visualizations. By default the first clips; with VIZ_MIN_MOTION set, only HIGH-MOTION
+        # clips (mean abs frame-to-frame change of the GT above the threshold) so the visuals actually
+        # show the character/scene moving instead of random low-motion Zelda moments.
         if viz_dir is not None and viz_saved < n_viz_target and x_hat_prime_first is not None:
-            n_to_save = min(B, n_viz_target - viz_saved)
-            for k in range(n_to_save):
+            min_motion = float(os.environ.get('VIZ_MIN_MOTION', 0.0))
+            for k in range(B):
+                if viz_saved >= n_viz_target:
+                    break
+                motion = (x[k, 1:] - x[k, :-1]).abs().mean().item()
+                if motion < min_motion:
+                    continue
                 _save_clip_visualization(
                     out_dir=viz_dir,
                     clip_idx=viz_saved,
@@ -255,6 +274,9 @@ def _evaluate_dataset(
         'used_zelda_holdout': dataset_name == 'ZELDA' and args.zelda_use_holdout,
         'tokenizer_recon_psnr_per_t': recon_per_t,
         'tokenizer_recon_psnr_mean': float(sum(recon_per_t) / max(len(recon_per_t), 1)),
+        'pred_motion': sum_pred_motion / n_clips,
+        'gt_motion': sum_gt_motion / n_clips,
+        'motion_ratio': (sum_pred_motion / sum_gt_motion) if sum_gt_motion > 0 else 0.0,
         'psnr_gt_actions_per_t': psnr_gt_per_t,
         'psnr_random_actions_per_t': psnr_rnd_per_t,
         'delta_psnr_per_t': delta_psnr_per_t,
