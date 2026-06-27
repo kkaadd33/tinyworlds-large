@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 from einops import repeat
@@ -43,9 +44,14 @@ class AdaptiveNormalizer(nn.Module):
                 nn.SiLU(),
                 nn.Linear(conditioning_dim, 2 * embed_dim)
             )
-            # for lam and dynamics we initialize with small non-zero weights 
-            # so conditioning is active from step 1 (helps prevent ignoring conditioning)
-            nn.init.normal_(self.to_gamma_beta[-1].weight, mean=0.0, std=1e-3)
+            # for lam and dynamics we initialize with small non-zero weights
+            # so conditioning is active from step 1 (helps prevent ignoring conditioning).
+            # NOTE: the original std=1e-3 is effectively identity (the action modulates the
+            # decoder by ~0.2% at init), which lets the decoder settle into ignoring the action
+            # before gamma/beta ever grow. FILM_INIT_STD raises it so the action has real
+            # influence from step 1. Default 1e-3 preserves the original dynamics behavior.
+            film_init_std = float(os.environ.get('FILM_INIT_STD', 1e-3))
+            nn.init.normal_(self.to_gamma_beta[-1].weight, mean=0.0, std=film_init_std)
             nn.init.zeros_(self.to_gamma_beta[-1].bias)
 
     def forward(self, x, conditioning=None):

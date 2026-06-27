@@ -79,7 +79,13 @@ class LatentActionsDecoder(nn.Module):
         # mask certain tokens from all frames except first frame
         # this strongly forces actions to contain most useful info (I recommend to keep based on experiments)
         if training and self.training:
-            keep_rate = 0.0
+            # keep_rate = Genie-style masking bottleneck = fraction of previous-frame tokens KEPT (not masked).
+            # 0.0 is NOT a bug: it is the original upstream default (AlmondGod/tinyworlds) -- mask every
+            # non-anchor token so the action must carry the change. But BOTH extremes collapse, for opposite
+            # reasons: 0.0 -> decoder sees only frame 0 and can't route it through 4 codes; 1.0 -> decoder
+            # sees the full previous frame and just COPIES it, so the action is useless. The Genie sweet spot
+            # is PARTIAL masking (~0.5). Default restored to upstream 0.0; sweep via LAM_KEEP_RATE.
+            keep_rate = float(os.environ.get('LAM_KEEP_RATE', 0.0))
             keep = (torch.rand(B, T-1, P, 1, device=frames.device) < keep_rate)
             keep[:, 0] = 1  # never mask first frame tokens (anchor) TODO: try rid of ablation
             video_embeddings = torch.where(
@@ -95,6 +101,12 @@ class LatentActionsDecoder(nn.Module):
         pred_frames = rearrange(
             patches, 'b t c (h w) p1 p2 -> b t c (h p1) (w p2)', h=H//self.patch_size, w=W//self.patch_size
         ) # [B, T-1, C, H, W]
+        # DELTA / residual prediction: treat the Tanh head output as the CHANGE from the previous frame,
+        # not the absolute frame. The static background becomes free (delta=0 there), so the loss and the
+        # action gradient concentrate on the moving region the action must explain -> closes the
+        # "copy the previous frame" shortcut that lets the model ignore the action. env-gated.
+        if os.environ.get('LAM_PREDICT_DELTA', '0') == '1':
+            pred_frames = frames + pred_frames  # `frames` = the previous frames (sliced to [:, :-1] above)
         return pred_frames  # [B, T-1, C, H, W]
 
 class LatentActionModel(nn.Module):
