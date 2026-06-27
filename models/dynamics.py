@@ -1,4 +1,5 @@
 from models.utils import ModelType
+import os
 import torch
 import torch.nn as nn
 import math
@@ -54,6 +55,17 @@ class DynamicsModel(nn.Module):
             # replace selected latents with mask tokens
             mask_token = repeat(self.mask_token.to(discrete_latents.device, discrete_latents.dtype), '1 1 1 L -> B T P L', B=B, T=T, P=P) # [B, T, P, L]
             discrete_latents = torch.where(mask_positions.unsqueeze(-1), mask_token, discrete_latents) # [B, T, P, L]
+
+            # CONTEXT-TOKEN CORRUPTION (exposure-bias / error-accumulation fix):
+            # corrupt a fraction of the UNMASKED (context) latents with Gaussian noise so the model
+            # learns to predict from imperfect history -- which is exactly what it gets at autoregressive
+            # rollout (its own re-tokenized predictions). Loss still counts only masked positions, so no
+            # loss change. env-gated; DYN_CTX_CORRUPT_P=0 (default) => off, identical to before.
+            p_corrupt = float(os.environ.get('DYN_CTX_CORRUPT_P', 0.0))
+            if p_corrupt > 0.0:
+                sigma = float(os.environ.get('DYN_CTX_CORRUPT_SIGMA', 1.0))
+                corrupt = (~mask_positions) & (torch.rand(B, T, P, device=discrete_latents.device) < p_corrupt)  # [B,T,P]
+                discrete_latents = discrete_latents + corrupt.unsqueeze(-1) * sigma * torch.randn_like(discrete_latents)
         else:
             mask_positions = None
 
@@ -62,6 +74,18 @@ class DynamicsModel(nn.Module):
         # add spatial PE (affects only first 2/3 of dimensions)
         # STTransformer adds temporal PE to last 1/3 of dimensions
         embeddings = embeddings + self.pos_spatial_dec.to(embeddings.device, embeddings.dtype)
+
+        # ACTION DROPOUT (classifier-free guidance training): randomly replace a sample's entire action
+        # sequence with a null (zeros) so the model learns BOTH the conditional p(x|action) AND the
+        # unconditional p(x). At inference, CFG amplifies (cond - uncond) to make actions actually steer.
+        # env-gated; DYN_ACTION_DROPOUT=0 (default) => off, identical to before.
+        if training and self.training and conditioning is not None:
+            p_drop = float(os.environ.get('DYN_ACTION_DROPOUT', 0.0))
+            if p_drop > 0.0:
+                drop = torch.rand(conditioning.shape[0], device=conditioning.device) < p_drop  # [B]
+                drop = drop.view(-1, *([1] * (conditioning.dim() - 1)))
+                conditioning = torch.where(drop, torch.zeros_like(conditioning), conditioning)
+
         transformed = self.transformer(embeddings, conditioning=conditioning)  # [B, T, P, E]
 
         # transform to logits for each token in codebook
@@ -91,6 +115,16 @@ class DynamicsModel(nn.Module):
             return torch.tensor(P_total, dtype=result.dtype, device=device)
         return result
 
+    def _cfg_logits(self, input_latents, conditioning, cfg_scale):
+        # classifier-free guidance: logits = uncond + scale*(cond - uncond). scale>1 amplifies the action's
+        # effect; scale<=0 (or no conditioning) falls back to the plain conditional pass.
+        if cfg_scale and cfg_scale > 0 and conditioning is not None:
+            lc, _, _ = self.forward(input_latents, training=False, conditioning=conditioning, targets=None)
+            lu, _, _ = self.forward(input_latents, training=False, conditioning=torch.zeros_like(conditioning), targets=None)
+            return lu + cfg_scale * (lc - lu)
+        logits, _, _ = self.forward(input_latents, training=False, conditioning=conditioning, targets=None)
+        return logits
+
     @torch.no_grad()
     def forward_inference(self, context_latents, prediction_horizon, num_steps, index_to_latents_fn, conditioning=None, schedule_k=5.0, temperature: float = 0.0):
         # MaskGIT-style iterative decoding across all prediction horizon steps
@@ -100,6 +134,7 @@ class DynamicsModel(nn.Module):
         dtype = context_latents.dtype
         B, T_ctx, P, L = context_latents.shape  # B, T_ctx, P, L
         H = int(prediction_horizon)  # number of horizon steps to decode
+        cfg_scale = float(os.environ.get('DYN_CFG_SCALE', 0.0))  # classifier-free guidance at inference; 0 = plain conditional
 
         # append prediction_horizon masked frame latents to predict dynamics on
         mask_latents = self.mask_token.to(device, dtype).expand(B, H, P, -1)  # [B, H, P, L]
@@ -110,8 +145,8 @@ class DynamicsModel(nn.Module):
         for m in range(num_steps):
             n_tokens_raw = self.exp_schedule_torch(m, num_steps, P_total, schedule_k, device)
 
-            # predict logits for current input
-            logits, _, _ = self.forward(input_latents, training=False, conditioning=conditioning, targets=None)  # [B, T_ctx+H, P, L^D]
+            # predict logits for current input (with CFG if enabled)
+            logits = self._cfg_logits(input_latents, conditioning, cfg_scale)  # [B, T_ctx+H, P, L^D]
             # temperature scaling
             if temperature and temperature > 0:
                 scaled_logits = logits / float(temperature)
@@ -177,7 +212,7 @@ class DynamicsModel(nn.Module):
         # final completion: fill any remaining masked tokens across all horizon steps via argmax
         # TODO: try removing
         if mask[:, :, :, 0].any():
-            logits, _, _ = self.forward(input_latents, training=False, conditioning=conditioning, targets=None)  # [B, T_ctx+H, P, L^D]
+            logits = self._cfg_logits(input_latents, conditioning, cfg_scale)  # [B, T_ctx+H, P, L^D]
             if temperature and temperature > 0:
                 scaled_logits = logits / float(temperature)
             else:
