@@ -11,6 +11,99 @@ World models can't use action-less internet video to scale like [VEO3](https://d
 
 TinyWorlds is meant to help people understand the clever autoregressive, unsupervised method Deepmind likely used to achieve **scalable world models**.
 
+---
+
+# This Fork — Changes vs. the Original TinyWorlds
+
+This is a modified fork of [AlmondGod/tinyworlds](https://github.com/AlmondGod/tinyworlds), worked on the **Zelda** dataset. The goal was to fix three problems in the original pipeline. Every change below is a loss function, a training trick, or inference-time guidance — they add **zero inference parameters** (about ~150 lines of functional code total).
+
+## The three problems and how they were fixed
+
+### 1. The latent action model (LAM) was collapsing
+During training the action encoder's variance ran away and then crashed to zero (tanh saturation), so the action codebook collapsed to a single code and the model stopped learning meaningful actions.
+
+Fix:
+- Lower learning rate (3e-5 instead of 1e-4) for stability.
+- A variance band (floor + ceiling) on the encoder's pre-quantization variance, so it can neither run away nor collapse.
+- A joint code-entropy loss (MAGVIT-v2 style) that pushes the model to use all of its action codes.
+
+Result: stable training, all 4 action codes used, LAM-only controllability +1.37 dB.
+Files: `models/latent_actions.py`, `models/norms.py`
+
+### 2. Predictions ignored the action (no controllability)
+The dynamics model injected the action through a near-identity FiLM layer, so the predicted future barely changed when the action changed.
+
+Fix:
+- Raise the FiLM init so the action actually modulates the features (`FILM_INIT_STD`).
+- Action-dropout during training (`DYN_ACTION_DROPOUT`): randomly drop the action so the model learns both p(x|a) and p(x).
+- Classifier-free guidance at inference (`DYN_CFG_SCALE`): push the prediction in the direction the action adds.
+
+Result: the action now steers the world (Delta control went from ~0 to positive).
+Files: `models/dynamics.py`, `models/norms.py`
+
+### 3. Inference frames were blurry
+The tokenizer was trained on a pixel-only loss, which averages away high-frequency detail and gives mushy reconstructions.
+
+Fix: a train-only VGG16 perceptual loss (`TOK_PERCEPTUAL_WEIGHT`). The VGG net is frozen and discarded at inference, so it adds zero inference parameters while restoring texture and edges.
+Files: `utils/perceptual.py`, `scripts/train_video_tokenizer.py`
+
+### (bonus) Rollout error accumulation
+A context-token corruption option (`DYN_CTX_CORRUPT_P`) adds Gaussian noise to a fraction of the context tokens during training, so the model learns to predict from imperfect history (what it actually gets during autoregressive rollout). Built in, off by default.
+Files: `models/dynamics.py`
+
+## Runs and results (Zelda)
+
+Four runs were compared on high-motion clips (CFG=3). The eval filmstrips are in [`report_figures/runs/`](report_figures/runs) (top row = ground truth, middle = prediction with the true action, bottom = prediction with a random action).
+
+| Run | Tokenizer | Motion ratio (moves?) | Delta control (action effect) | Image quality |
+|-----|-----------|-----------------------|-------------------------------|---------------|
+| A | tiny, no perceptual (0.14M) | 0.78 | +0.47 | blurry |
+| **B** | tiny + perceptual (0.14M) | **1.21** | **+0.88** | modest |
+| C | big (67.3M) | 0.96 | -0.05 | sharp |
+| **D** | big + strong control (67.3M) | 0.44 | +2.24 (*) | sharpest |
+
+- **B** = best controllability (it moves and the action steers it).
+- **D** = best image quality (sharpest, coherent motion); chosen as the showcase run.
+- (*) D's large Delta is partly inflated by guidance degrading the random baseline — its motion ratio is the lowest. Judge "does it move" by the motion ratio, not Delta alone.
+
+Model sizes: tokenizer (tiny) 0.14M / (big) 67.3M, LAM 67.4M, dynamics 76.3M.
+
+## New environment knobs (all default to OFF = original behavior)
+
+| Env var | File | Effect |
+|---------|------|--------|
+| `LAM_VAR_TARGET`, `LAM_VAR_MAX` | latent_actions.py | variance band (floor / ceiling) |
+| `LAM_KEEP_RATE`, `LAM_PREDICT_DELTA` | latent_actions.py | LAM recipe knobs |
+| `FILM_INIT_STD` | norms.py | FiLM action-conditioning strength |
+| `DYN_ACTION_DROPOUT`, `DYN_CFG_SCALE` | dynamics.py | CFG training + inference guidance |
+| `DYN_CTX_CORRUPT_P`, `DYN_CTX_CORRUPT_SIGMA` | dynamics.py | context corruption (rollout robustness) |
+| `TOK_PERCEPTUAL_WEIGHT` | train_video_tokenizer.py | perceptual loss weight |
+
+## Files changed
+
+| File | Lines | What |
+|------|-------|------|
+| `models/latent_actions.py` | 124 | joint entropy loss + variance band (anti-collapse) |
+| `models/dynamics.py` | 41 | action-dropout + classifier-free guidance + context corruption |
+| `utils/perceptual.py` (new) | 69 | train-only VGG perceptual loss |
+| `models/norms.py` | 12 | tunable FiLM init |
+| `scripts/evaluate.py` | 28 | prediction-motion metric + high-motion viz filter |
+
+## Reproducing the runs
+
+Launch scripts (Slurm / torchrun) are in the repo root, e.g. [`run_dynamics_ctx4_sharp.sh`](run_dynamics_ctx4_sharp.sh) for run B's dynamics.
+
+The model checkpoints are **not** in this repo (each run is 13–149 GB). On the cluster they live under `results/`:
+
+| Run | Tokenizer | LAM | Dynamics |
+|-----|-----------|-----|----------|
+| A | `results/large_zelda` | (shared) | `results/large_zelda_ctx4_cfg_dyn` |
+| B | `results/large_zelda_tok_perceptual` | `results/large_zelda_ctx4_lr3e5` | `results/large_zelda_ctx4_sharp_dyn` |
+| C | `results/large_zelda_tok_large_perceptual` | (shared) | `results/large_zelda_ctx4_bigtok_dyn` |
+| D | `results/large_zelda_tok_large_perceptual` | (shared) | `results/large_zelda_bigtok_strongctrl_dyn` |
+
+---
+
 ## Table of Contents
 
 - [Getting Started](#getting-started)
