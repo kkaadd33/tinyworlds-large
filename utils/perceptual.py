@@ -1,12 +1,11 @@
-"""Train-only VGG16 perceptual (LPIPS-style) loss for the video tokenizer.
-
-Pixel smooth_l1/L2 alone optimizes toward the per-pixel mean and over-smooths
-high-frequency detail -> blurry reconstructions (the dominant cause of the
-tokenizer's ~31 dB recon ceiling). Adding a perceptual loss on frozen VGG16
-features restores texture/edges. The VGG net is FROZEN and used only during
-training, so it adds ZERO inference parameters (respects the no-param-increase
-constraint). Computed in the training loop, never stored in the model/checkpoint.
-"""
+# Train-only VGG16 perceptual (LPIPS-style) loss for the video tokenizer.
+#
+# Pixel smooth_l1/L2 alone optimizes toward the per-pixel mean and over-smooths
+# high-frequency detail -> blurry reconstructions (the dominant cause of the
+# tokenizer's ~31 dB recon ceiling). Adding a perceptual loss on frozen VGG16
+# features restores texture/edges. The VGG net is FROZEN and used only during
+# training, so it adds ZERO inference parameters (respects the no-param-increase
+# constraint). Computed in the training loop, never stored in the model/checkpoint.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
