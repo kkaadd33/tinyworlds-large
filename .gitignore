@@ -12,5 +12,10 @@ setup.sh
 *.h5
 .DS_Store
 
+# editor / IDE
+.cursor/
+.vscode/
+.idea/
+
 # keep the A/B/C/D eval images + slides (report_figures is NOT a *results* dir)
 !report_figures/
