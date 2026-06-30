@@ -91,7 +91,7 @@ Model sizes: tokenizer (tiny) 0.14M / (big) 67.3M, LAM 67.4M, dynamics 76.3M.
 
 ## Reproducing the runs
 
-Launch scripts (Slurm / torchrun) are in the repo root, e.g. [`run_dynamics_ctx4_sharp.sh`](run_dynamics_ctx4_sharp.sh) for run B's dynamics.
+Launch scripts (Slurm / torchrun) are organized under [`launch/`](launch) by stage (`tokenizer/`, `action/`, `dynamics/`, `eval/`), e.g. [`launch/dynamics/run_dynamics_ctx4_sharp.sh`](launch/dynamics/run_dynamics_ctx4_sharp.sh) for run B's dynamics.
 
 The model checkpoints are **not** in this repo (each run is 13–149 GB). On the cluster they live under `results/`:
 
