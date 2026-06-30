@@ -1,0 +1,11 @@
+# LARGE tokenizer (tiny was 32/128/4) — same FSQ codebook (latent_dim 5, num_bins 4 = 1024) so dynamics stays compatible
+batch_size_per_gpu: 8     # 128-res = 4x pixels, smaller batch (80GB)
+gradient_accumulation_steps: 2
+n_updates: 40000
+learning_rate: 0.0001     # anti-collapse (3e-4 collapsed at 64-res)
+log_interval: 2500
+embed_dim: 512
+num_heads: 8
+hidden_dim: 2048
+num_blocks: 8
+checkpoint: null

@@ -1,0 +1,21 @@
+# Training - LARGE dynamics on OUR tiny tokenizer + the FIXED (stable+controllable) ctx8 action model
+batch_size_per_gpu: 8     # ctx8 doubles temporal activations; smaller per-GPU batch for memory
+gradient_accumulation_steps: 4  # 8 x 4gpu x 4 = eff batch 128 (same as ctx4 run)
+n_updates: 30000
+learning_rate: 0.0002   # was 0.001 (Tri tuned that for eff batch 800 on 80GB GPUs); diverged at lr peak ~5k on our eff batch 128. linear-scaled.
+log_interval: 500               # checkpoint every 500 steps
+
+use_actions: true
+
+# LARGE params
+embed_dim: 512
+num_heads: 8
+hidden_dim: 2048
+num_blocks: 18
+
+# Paths: OUR tiny tokenizer @64 (frozen) + OUR large action model (frozen)
+video_tokenizer_path: results/large_zelda/video_tokenizer/checkpoints/video_tokenizer_step_37500
+latent_actions_path: results/large_zelda_ctx8_fix/latent_actions/checkpoints/latent_actions_step_9500
+
+# resume from checkpoint
+checkpoint: null

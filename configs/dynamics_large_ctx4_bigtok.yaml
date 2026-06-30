@@ -1,0 +1,21 @@
+# Training - LARGE dynamics at CONTEXT 4 on the FIXED ctx4 action model (strongly controllable, LAM Delta +1.37)
+batch_size_per_gpu: 16    # ctx4 = half the temporal activations of ctx8
+gradient_accumulation_steps: 2  # 16 x 4gpu x 2 = eff 128
+n_updates: 30000
+learning_rate: 0.0002   # was 0.001 (Tri tuned that for eff batch 800 on 80GB GPUs); diverged at lr peak ~5k on our eff batch 128. linear-scaled.
+log_interval: 500               # checkpoint every 500 steps
+
+use_actions: true
+
+# LARGE params
+embed_dim: 512
+num_heads: 8
+hidden_dim: 2048
+num_blocks: 18
+
+# Paths: OUR tiny tokenizer @64 (frozen) + OUR large action model (frozen)
+video_tokenizer_path: results/large_zelda_tok_large_perceptual/video_tokenizer/checkpoints/video_tokenizer_step_37500
+latent_actions_path: results/large_zelda_ctx4_lr3e5/latent_actions/checkpoints/latent_actions_step_8000
+
+# resume from checkpoint
+checkpoint: null
