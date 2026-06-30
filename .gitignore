@@ -4,3 +4,13 @@ data/
 batch_visualizations/*
 wandb/*
 setup.sh
+
+# logs, temp, and large data
+*.out
+*.err
+*.pyc
+*.h5
+.DS_Store
+
+# keep the A/B/C/D eval images + slides (report_figures is NOT a *results* dir)
+!report_figures/
